@@ -85,6 +85,7 @@
     [`(alen ,e)                      (alen-node  (parse-es e))]
     [`(print ,e)                     (print-node (parse-es e))]
     [`(read)                         (read-node  empty)]
+    [`(begin ,e1 ,e2)                (begin-node (parse-es e1 e2))]
     [`(make-closure ,label ,e)       (make-closure-node  (parse-es label e))]
     [`(closure-proc ,e)              (closure-proc-node  (parse-es e))]
     [`(closure-vars ,e)              (closure-vars-node  (parse-es e))]

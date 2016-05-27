@@ -33,6 +33,16 @@
   (nth-child a-node 2))
 
 
+;; node (listof node?) -> node
+(define (replace-children a-node new-children)
+  (set-node-children! a-node new-children)
+  a-node)
+
+;; node number? node -> node
+(define (replace-child a-node n new-child)
+  (replace-children a-node (list-set (get-children a-node) n new-child)))
+
+
 
 ;; e node
 (struct e-node node ()
@@ -162,10 +172,17 @@
   #:mutable)
 
 
-;; print
+;; read
 (struct read-node d-node ()
   #:transparent
   #:mutable)
+
+
+;; being
+(struct begin-node d-node ()
+  #:transparent
+  #:mutable)
+
 
 
 

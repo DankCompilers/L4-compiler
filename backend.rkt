@@ -7,264 +7,208 @@
 
 
 ;; setup name generators
-(define L3-prefix 'L3)
+(define L4-prefix 'L4)
 (define label-prefix ':)
-(define temp-gen  (make-temp-gen L3-prefix))
-(define true-label-gen (let ([generator (make-temp-gen label-prefix)])
-                         (lambda () (generator 'true))))
-(define false-label-gen (let ([generator (make-temp-gen label-prefix)])
-                          (lambda () (generator 'false))))
-(define return-label-gen (let ([generator (make-temp-gen label-prefix)])
-                          (lambda () (generator 'return))))
-(define arg-regs (list 'rdi 'rsi 'rdx 'rcx 'r8 'r9))
+(define temp-gen  (make-temp-gen L4-prefix))
 
 (define var-count -1)
 
 (define (make-valid var-name)
   ;(set! var-count (+ var-count 1))
-  (string->symbol (format "~a~a" 'L3_ var-name)))
+  (string->symbol (format "~a~a" 'L4_ var-name)))
 
-
-
-
-;; p-node? -> string?
-(define (L3->L2 l3-p-node)
-  (to-string (p-node->L2 p-node)))
 
 
 ;; e-node? symbol?/bool? -> string
-(define (e-node->L2 e-ast)
+(define (e-node->L3 e-ast)
   ;; match the three possibilites
   (match e-ast
-    [(? let-node?)   (let* ([children  (get-children e-ast)]
-                            [var-name  (v-node->L2 (first children))]
-                            [var-val   (second children)]
-                            [child-e   (third children)])
-                   ;(printf "1:~a\n 2:~a\n 3:~a\n" var-name c2 c3)
+    [(? let-node?)   (let* ([children    (get-children e-ast)]
+                            [var-val-e   (second children)]
+                            [child-e     (third children)])
                    (append
-                    (d-node->L2 var-val  var-name)
-                    (e-node->L2 child-e)))]
+                    (d-node->L3 var-val  var-name)
+                    (e-node->L3 child-e)))]
     
     [(? if-node?)   (let* ([children (get-children e-ast)]
-                       [bool-val  (v-node->L2 (first children))]
+                       [bool-val  (v-node->L3 (first children))]
                        [true-e  (second children)]
                        [false-e  (third children)]
                        [true-label (true-label-gen)]
                        [false-label (false-label-gen)])
-                  ;; must be greater than 1 because 1 -> 0 in L2
-                  (append `((cjump ,bool-val = 1 ,false-label ,true-label)
-                            ,true-label)
-                          (e-node->L2 true-e)
-                          `(,false-label)
-                          (e-node->L2 false-e)))]
+                      )]
     ;; if a d node in an e spot, must be the last one, needs to return as well
-     [else (append (d-node->L2 e-ast 'rax) `((return)))]))
+     [else  (d-node->L3 e-ast)]))
+
+
+;; e-node -> e-node
+(define (lift og-ast child-num)
+  (let*   ([lifted    (nth-child og-ast child-num)])
+    (match lifted
+      [(? d-node?)    (lift-app  og-ast child-num)]
+      [(? if-node?)   (lift-if   og-ast child-num)]
+      [(? let-node?)  (lift-let  og-ast child-num)]
+      [else         (error "lift: attempted to lift on non d/e-node. " og-ast lifted)])))
+
+;; e-node -> e-node
+(define (lift-app og-ast child-num)
+  (let*   ([lifted    (nth-child og-ast child-num)]
+           [tmp       (parse-v (temp-gen))]
+           [new-ast   (replace-child og-ast n tmp)])
+    (let-node `(,tmp ,lifted ,new-ast))))
+
+;; e-node -> e-node
+(define (lift-if og-ast child-num)
+  (let*   ([lifted-if  (nth-child og-ast child-num)]
+           [if-cond    (nth-child lifted-if 0)]
+           [if-e1      (nth-child lifted-if 1)]
+           [if-e2      (nth-child lifted-if 2)]
+           [new-ast1   (replace-child og-ast n if-e1)]
+           [new-ast2   (replace-child og-ast n if-e2)])
+    (if-node `(,if-cond ,new-ast1 ,new-ast2))))
+
+
+;; e-node -> e-node
+(define (lift-let og-ast child-num)
+  (let*   ([lifted-let (nth-child og-ast child-num)]
+           [var-name   (nth-child lifted-let 0)]
+           [var-val    (nth-child lifted-let 1)]
+           [let-body   (nth-child lifted-let 2)]
+           [new-ast    (replace-child og-ast n let-body)])
+    (let-node `(,var-name ,var-val ,new-ast))))
 
 
 
-(define (gen-bounds-check x tmp an-array an-index)
-  (let ([bounds-pass-label1 (true-label-gen)]
-        [bounds-pass-label2 (true-label-gen)]
-        [bounds-fail-label  (false-label-gen)])
-    ;; checks if positive first
-    `((cjump 0 <= ,an-index  ,bounds-pass-label1 ,bounds-fail-label)
-      ,bounds-fail-label
-      (rdi <- ,an-array)
-      (rsi <- ,(encode an-index))
-      (call array-error 2)
-      ;; now checks if less than array size
-      ,bounds-pass-label1
-      (,tmp <- (mem ,an-array 0))
-      (,tmp <<= 1)
-      (,tmp += 1)
-      (cjump ,(encode an-index) < ,tmp ,bounds-pass-label2 ,bounds-fail-label)
-      ,bounds-pass-label2)))
+;; node -> boolean?
+(define (app-lift? an-ast)
+  (or (d-node? an-ast) (e-node? an-ast)))
 
 
+;; node -> boolean/number
+(define (check-lift an-ast)
+  (let* ([children      (get-children an-ast)]
+         [num-children  (length children)]
+         [needs-lift    #f])
+    (for ([i  (range num-children)]
+          #:break (not (boolean? needs-lift)))
+         (when (app-lift? (list-ref children i))
+             (set! needs-lift i)))))
 
 ;; d-node? symbol? -> string?
-(define (d-node->L2 d-ast bound-var)
+(define (d-node->L3 d-ast)
+  (let ([children   (get-children d-ast)])
   ;(println d-ast)
   (match d-ast
-    [(or (? label-node?)
-         (? num-node?)
-         (? var-node?)
-         (? biop-op-node?))  `((,bound-var <- ,(v-node->L2 d-ast)))]
-    [else
-     (let*  ([x bound-var]
-             [children    (get-children d-ast)]
-             [c-data      (map  v-node->L2 children)])
-       (match d-ast
-         [(? biop-node?)        (let* ([op         (first c-data)]
-                                       [arg1       (second c-data)]
-                                       [arg2       (third  c-data)]
-                                       ;[x-is-arg1? (and (symbol? arg1) (symbol= arg1 x))]
-                                       [x-is-arg2? (and (symbol? arg2) (symbol=? arg2 x))]
-                                       [contains-var (ormap var-node? children)])
-                                  (match op
-                                    ;; addition/subtraction need slight modification for encoding
-                                    ['+           (cond
-                                                    ;[x-is-arg1?    ((,x <- ,arg1)
-                                                    ;                 (,x += ,arg2)
-                                                    ;                 (,x -= 1))]
-                                                    [x-is-arg2?     `((,x <- ,arg2)
-                                                                     (,x += ,arg1)
-                                                                     (,x -= 1))]
-                                                    [else          `((,x <- ,arg1)
-                                                                     (,x += ,arg2)
-                                                                     (,x -= 1))])]
-                                    ['-           (let ([tmp   (temp-gen 'sub)])
-                                                    (cond
-                                                      [x-is-arg2?     `((,tmp <- ,arg2)
-                                                                         (,x <- ,arg1)
-                                                                         (,x -= ,tmp)
-                                                                         (,x += 1))]
-                                                      ;; no var -> needs adjustment
-                                                      [else         `((,x <- ,arg1)
-                                                                      (,x -= ,arg2)
-                                                                      (,x += 1))]))]
-                                    ;;multiplication needs a tmp name
-                                    ['*           (let ([tmp (temp-gen 'mult)])
-                                                    `((,tmp <- ,arg1)
-                                                      (,tmp >>= 1)
-                                                      (,x  <- ,arg2)
-                                                      (,x >>= 1)
-                                                      (,x *= ,tmp)
-                                                      (,x <<= 1)
-                                                      (,x += 1)))]
-                                    ;;cmp just need memcmp2w
-                                    [(or '= '< '<=) `((,x <- ,arg1 ,op ,arg2)
-                                                      (,x <<= 1)
-                                                      (,x += 1))]
-                                    ;; signal error
-                                    [else          (error (format "biop-to-string: Did not recognize operator ~a" op))]))]
+    [(? biop-node?)       (let (;[op         (first  children)]
+                                 [arg1       (second children)]
+                                 [arg2       (third  children)])
+                             (cond
+                               [(e-node? arg1)  empty]
+                               [(e-node? arg2)  empty]))]
          
-         ;;pred nodes
-         [(? a?-node?)             `((,x <- ,(first c-data))
-                                     (,x &= 1)
-                                     (,x *= -2)
-                                     (,x += 3))]
+    ;;pred nodes
+    [(? a?-node?)          (let ([an-e  (first children)])
+                             (cond
+                               [(e-node? an-e)   empty]
+                               [else               d-ast]))]
          
-         [(? number?-node?)      `((,x <- ,(first c-data))
-                                   (,x &= 1)
-                                   (,x <<= 1)
-                                   (,x += 1))]
+    [(? number?-node?)     (let ([an-e  (first children)])
+                             (cond
+                               [(e-node? an-e)   empty]
+                               [else               d-ast]))]
+    
+    [(? func-call-node?)   (let* ([func-label (first children)]
+                                  [args       (rest  children)]
+                                  [num-args   (length args)])
+                             (for ([i (range num-args)])
+                                  ()))]
          
-         [(? func-call-node?)      (let* ([func-label (first c-data)]
-                                          [ret-label  (return-label-gen)]
-                                          [args       (rest c-data)]
-                                          [num-args   (length args)]
-                                          [offset    -8])
-                                     (append
-                                      (cons `((mem rsp -8) <- ,ret-label)
-                                           (for/list ([i (range num-args)])
-                                                     (cond
-                                                       [(< i 6)  `(,(list-ref arg-regs i) <- ,(list-ref args i))]
-                                                       [else     (set! offset (- offset 8))
-                                                                 `((mem rsp ,offset) <- ,(list-ref args i))])))
-                                       
-                                      `((call ,func-label ,num-args)
-                                        ,ret-label
-                                        (,x <- rax))))]
+    ;; array nodes
+    [(? new-array-node?)    (let* ([size-arg    (first  children)]
+                                   [val-arg     (second children)])
+                             (cond
+                               [(e-node? size-arg) empty]
+                               [(e-node? val-arg)  empty]))]
+    
+    [(? new-tuple-node?)   (let* ([size-arg    (first  children)]
+                                  [val-args    (rest children)]
+                                  [num-args    (length args)])
+                             (cond
+                               [(e-node? size-arg) empty]
+                               [else
+                                (for ([i (range num-args)])
+                                     ())]))]
+    
          
-         ;; array nodes
-         [(? new-array-node?)        (let* ([size-arg    (first c-data)]
-                                            [val-arg     (second c-data)])
-                                       `((rdi <- ,size-arg)
-                                         (rsi <- ,val-arg)
-                                         (call allocate 2)
-                                         (,x <- rax)))]
+    [(? aref-node?)        (let ([an-array    (first  children)]
+                                 [an-index    (second children)])
+                             (cond
+                               [(e-node? an-array)  empty]
+                               [(e-node? an-index)  empty]
+                               [else                d-ast]))]
          
-         [(? new-tuple-node?)   (let* ([size-arg    (encode (length c-data))]
-                                       [val-arg     0];(first c-data)]
-                                       [offset      0])
-                                  
-                                   (append `((rdi <- ,size-arg)
-                                             (rsi <- ,val-arg)
-                                             (call allocate 2))
-                                           (for/list ([a-val c-data ])
-                                                     (set! offset (+ offset 8))
-                                                     `((mem rax ,offset) <- ,a-val))
-                                           `((,x <- rax))))]
+    [(? aset-node?)        (let ([an-array    (first c-data)]
+                                 [an-index    (decode (second c-data))]
+                                 [a-val       (third c-data)])
+                             (cond
+                               [(e-node? an-array)  empty]
+                               [(e-node? an-index)  empty]
+                               [(e-node? an-val)    empty]
+                               [else                d-ast]))]  
          
-         
-         [(? aref-node?)        (let ([an-array    (first c-data)]
-                                      [an-index    (decode (second c-data))]
-                                      [tmp   (temp-gen 'bcheck)])
-                                  ;; check bounds, return val
-                                  (append (gen-bounds-check x tmp an-array an-index)
-                                          `((,tmp <- ,an-index)
-                                            (,tmp *= 8)
-                                            (,tmp += ,an-array)
-                                            (,x   <- (mem ,tmp 8)))))]
-         
-         [(? aset-node?)        (let ([tmp   (temp-gen 'bcheck)]
-                                      [an-array    (first c-data)]
-                                      [an-index    (decode (second c-data))]
-                                      [a-val       (third c-data)])
-                                  ;; check bounds, set val, return 0
-                                  (append (gen-bounds-check x tmp an-array an-index)
-                                          `((,tmp <- ,an-index)
-                                            (,tmp *= 8)
-                                            (,tmp += ,an-array)
-                                            ((mem ,tmp 8)   <- ,a-val)
-                                            (,x <- 1))))]   ;; put the final result for aset into x (always 0)
-         
-         [(? alen-node?)        (let ([an-array (first c-data)])
-                                  `((,x <- (mem ,an-array 0))
-                                    (,x <<= 1)
-                                    (,x += 1)))]
-         
-         
-         ;; closure nodes
-         [(? make-closure-node?)   (let* ([size-arg    (encode 2)]
-                                          [val1        (first c-data)]
-                                          [val2        (second c-data)])
-                                     `((rdi <- ,size-arg)
-                                       (rsi <- ,val1)
-                                       (call allocate 2)
-                                       (,x <- rax)
-                                       ((mem ,x 16) <- ,val2)))]
-         
-         [(? closure-proc-node?)    (let ([an-array    (first c-data)]
-                                          [an-index    0]
-                                          [tmp   (temp-gen 'bcheck)])
-                                      ;; check bounds, return val
+    [(? alen-node?)        (let ([an-array (first children)])
+                             (cond
+                               [(e-node? an-array)  empty]
+                               [else                d-ast]))]
+    
+    
+    ;; closure nodes
+    [(? make-closure-node?)   (let* ([label   (first  children)]
+                                     [val     (second children)])
+                             (cond
+                               [(e-node? label) empty]
+                               [(e-node? val)  empty]))]
+    
+    [(? closure-proc-node?)    (let ([an-array    (first c-data)]
+                                     [an-index    0]
+                                     [tmp   (temp-gen 'bcheck)])
+                                 ;; check bounds, return val
                                       (append (gen-bounds-check x tmp an-array an-index)
                                               `((,x   <- (mem ,an-array 8)))))]
-         
-         [(? closure-vars-node?)    (let ([an-array    (first c-data)]
-                                          [an-index    1]
-                                          [tmp   (temp-gen 'bcheck)])
-                                      ;; check bounds, return val
-                                      (append (gen-bounds-check x tmp an-array an-index)
-                                              `((,x   <- (mem ,an-array 16)))))]
-         
-         
-         [(? print-node?)       `((rdi <- ,(first c-data))
-                                  (call print 1)
-                                  (,x <- rax))]
-         
-         [(? read-node?)         `((call read 0)
-                                   (,x <- rax))]
+    
+    [(? closure-vars-node?)    (let ([an-array    (first c-data)]
+                                     [an-index    1]
+                                     [tmp   (temp-gen 'bcheck)])
+                                 ;; check bounds, return val
+                                 (append (gen-bounds-check x tmp an-array an-index)
+                                         `((,x   <- (mem ,an-array 16)))))]
+    
+    
+    [(? print-node?)       `((rdi <- ,(first c-data))
+                             (call print 1)
+                             (,x <- rax))]
+    
+    [(? read-node?)         d-ast]
+    [(? begin-node?)        empty]
          ;; signal error
-         [else              (error "d-node->L2: Did not recognize ~a")]))]))
+         [else                  (v-node-> d-ast)]))]))
 
 
 
-(define (v-node->L2 v-ast)
-  (if (var-node? v-ast)
-      (make-valid (encode (first-child v-ast)))
-      (encode (first-child v-ast))))
+;;  v-node -> number?/symbol?
+(define (v-node->L3 v-ast)
+  (match v-ast
+    [(? v-node?) (get-first-child v-ast)]
+    [else        (error "v-node->L3: did not match any nodes: " v-ast)]))
 
 
 ;; node? -> quoted
-(define (f-node->L2 f-ast)
+(define (f-node->L3 f-ast)
     (match f-ast
-      [(? f-node?)   (let* ([func-label   (v-node->L2     (get-label f-ast))]
-                            [args         (map v-node->L2 (get-args  f-ast))]
+      [(? f-node?)   (let* ([func-label   (v-node->L3     (get-label f-ast))]
+                            [args         (map v-node->L3 (get-args  f-ast))]
                             [num-args     (length args)]
-                            [body         (e-node->L2     (get-body  f-ast))]
+                            [body         (e-node->L3     (get-body  f-ast))]
                             [num-stacked  (if (> (length args) 6)
                                               (- (length args) 6)
                                               0)]
@@ -280,14 +224,14 @@
                                                      `(,(list-ref args i) <- (stack-arg ,stack-offset))]))
                                body))]
       
-      [else            (error "f-node->L2: provided node is no f-node")]))
+      [else            (error "f-node->L3: provided node is no f-node")]))
 
 ;; node? -> quoted
-(define (p-node->L2 p-ast)
+(define (p-node->L3 p-ast)
     (match p-ast
       ;; p nodes
       [(? p-node?)
-       ;; idea - treat the main-e as a func
+       ;; idea - treat the main-e as a func. Make it the main func if it has 0 arguments
             (let* ([main-e       (get-main-e p-ast)]
                    [is-func?     (and (func-call-node? main-e)
                                       (= 1 (length (get-children main-e))))]
@@ -301,11 +245,11 @@
                    [func-asts    (if is-func?
                                      real-funcs
                                      (cons main-e-func real-funcs))]
-                   [funcs        (map f-node->L2 func-asts)]
+                   [funcs        (map f-node->L3 func-asts)]
                    )
               ;(printf "main-e:~a\n" main-e)
               ;(println "process pnode fine")
-              (cons (v-node->L2 main-e-label) funcs))]
+              (cons (v-node->L3 main-e-label) funcs))]
       
       ;; did not match any valid cases
-      [else   (error "p-node->L2: invalid node: ~a" p-ast)]))
+      [else   (error "p-node->L3: invalid node: ~a" p-ast)]))
