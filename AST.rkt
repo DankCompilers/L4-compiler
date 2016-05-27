@@ -3,7 +3,6 @@
 
 (provide (all-defined-out))
 
-
 ;;;;;;;;;;;;; BASE TYPES ;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 ;; base struct for all AST nodes
@@ -12,24 +11,44 @@
   #:transparent
   #:mutable)
 
+
+(define (make-copy a-node)
+  (let ([children (get-children a-node)])
+    (match a-node
+      [(? p-node?)         (p-node children   (get-main-e a-node))]
+      [(? f-node?)         (f-node children   (get-label a-node) (get-args a-node))]
+      [(? let-node?)       (let-node children)]
+      [(? if-node?)        (if-node children)]
+      [(? biop-node?)      (biop-node children)]
+      [(? number?-node?)   (number?-node children)]
+      [(? a?-node?)        (a?-node children)]
+      [(? new-array-node?) (new-array-node children)]
+      [(? new-tuple-node?) (new-tuple-node children)]
+      [(? aref-node?)      (aref-node children)]
+      [(? alen-node?)      (alen-node children)]
+      [(? aset-node?)      (aset-node children)]
+      [(? make-closure-node?) (make-closure-node children)]
+      [(? closure-proc-node?)  (closure-proc-node children)]
+      [(? closure-vars-node?)  (closure-vars-node children)]
+      [(? read-node?)          (read-node children)]
+      [(? print-node?)         (print-node children)]
+      [(? func-call-node?)     (func-call-node children)]
+      [(? begin-node?)         (begin-node children)]
+      [else                    (error "make-copy: not a node" a-node)])))
+
 (define (get-children a-node)
-  ;(-> node? (listof node?))
   (node-children a-node))
 
 (define (nth-child a-node n)
- ; (-> node? number? any/c)
   (list-ref (get-children a-node) n))
 
 (define (first-child a-node)
-;  (-> node? any/c)
   (nth-child a-node 0))
 
 (define (second-child a-node)
- ; (-> node? any/c)
   (nth-child a-node 1))
 
 (define (third-child a-node)
- ; (-> node? any/c)
   (nth-child a-node 2))
 
 
@@ -81,16 +100,13 @@
   #:mutable)
 
 (define (get-label a-f-node)
-  ;(-> f-node? v-node?)
   (f-node-label a-f-node))
 
 
 (define (get-args a-f-node)
-  ;(-> f-node? (listof v-node?))
   (f-node-args a-f-node))
 
 (define (get-body a-f-node)
-  ;(-> f-node? (listof e-node?))
   (get-children a-f-node))
 
 

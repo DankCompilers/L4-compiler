@@ -49,14 +49,14 @@
 (define (parse-p quoted-expr)
   (let ([main-e           (parse-e          (first quoted-expr))]
         [functions        (map parse-f      (rest  quoted-expr))])
-  (p-node  functions main-e)))
+  (p-node functions main-e)))
 
 
 ;; quoted -> func-node
 (define (parse-f  quoted-expr)
   (let ([func-label (parse-v     (first quoted-expr))]
         [args       (map parse-v (second quoted-expr))]
-        [body       (parse-e     (third quoted-expr))])
+        [body       (parse-es     (third quoted-expr))])
     (f-node body func-label args)))
 
 

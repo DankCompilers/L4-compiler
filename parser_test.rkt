@@ -1,6 +1,8 @@
 #lang racket
 
-(require "AST.rkt" "lib.rkt" "parser.rkt")
+(require "./AST.rkt"
+         "./lib.rkt"
+         "./parser.rkt")
 (require rackunit)
 
 
@@ -168,7 +170,7 @@
 
 
   ;; f node
-  (test-parse parse-f `(:a-func (arg1 arg2 arg3) (let ([sum1 (+ arg1 arg2)]) (+ sum1 arg3)))  (f-node (parse-e `(let ([sum1 (+ arg1 arg2)]) (+ sum1 arg3)))
+  (test-parse parse-f `(:a-func (arg1 arg2 arg3) (let ([sum1 (+ arg1 arg2)]) (+ sum1 arg3)))  (f-node (parse-es `(let ([sum1 (+ arg1 arg2)]) (+ sum1 arg3)))
                                                                                                       (parse-v ':a-func ) (parse-vs 'arg1 'arg2 'arg3)))
 
   )
